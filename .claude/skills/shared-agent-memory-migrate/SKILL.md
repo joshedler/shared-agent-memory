@@ -45,8 +45,18 @@ happens whenever Syncthing has already synced another host's content into
 this key before migration runs here (the expected order: pair Syncthing
 with an existing host *before* running this skill on a new one, so this
 is the common case, not an edge case). A single local store migrating
-into an already-populated key is a same-key merge, not a plain move —
-follow the merge process below.
+into an already-populated key needs the same-key merge process below —
+**but if that local store is the mixed home-directory store, run the
+per-file classification from step 3 first.** Classification and same-key
+merging are two separate passes that both apply to the home-directory
+case, not alternatives — don't let "there's already content at `_personal`"
+skip straight to comparing the whole store against it. Classify every
+file first (personal / this project's own key / this host specifically /
+unresolved); only the files that come out classified as genuinely
+`_personal` are what then go through the same-key duplicate-fact merge
+against what's already there. A file that turns out to be host- or
+project-specific never enters that merge at all — it goes straight to its
+own destination, whether or not anything's already sitting at `_personal`.
 
 ## 3. Migrate each group
 
@@ -76,6 +86,12 @@ exactly one destination for the store's own memory *path* itself (see
 step 4) — for the home-directory case, that's `_personal`, since
 whatever's left there after pulling out the project-specific files is
 what actually stays home-agnostic.
+
+This classification pass always runs first, whether or not `_personal`
+already has content from another host. If it does (see step 2), the
+files classified as `_personal` here are what feed into the same-key
+merge below — classify the whole store before checking any of it against
+what's already there, don't merge first and classify whatever's left.
 
 **Multiple stores, same key:** this is a real merge, not a move. Read every
 store in the group, and for each memory file / `MEMORY.md` entry:
