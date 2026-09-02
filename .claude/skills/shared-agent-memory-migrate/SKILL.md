@@ -68,7 +68,20 @@ store):** don't move the whole store as one unit — classify file by file
 instead. For each memory file, read it and decide:
 
 - Is it a `feedback`-type memory (per its frontmatter `metadata.type`)
-  with no specific project tied to it? → `_personal`.
+  with no specific project tied to it, and nothing about it is specific
+  to *this host* either? → `_personal`, untagged.
+- Does it document something true of this host specifically — hardware,
+  local network, anything that would be wrong information if read on a
+  different machine — regardless of memory `type`? → still `_personal`
+  (it's not project-specific, and there's no separate host-scoped
+  bucket), but add `hosts: [<hostname>]` to its frontmatter before moving
+  it. This is the same `hosts:` field used for host-scoped
+  feedback/behavior memory, generalized to any memory type — a memory
+  file being scoped to one host isn't a `feedback`-only concept. Don't
+  invent a `_personal-<host>`/`_host-<host>` bucket for this; a second
+  bucket only answers "which folder" and still leaves "does anything
+  respect the scope" unsolved, which the `hosts:` field already answers
+  on its own.
 - Does it document a fact, decision, or behavior specific to one
   resolvable project (a `project`-type memory, or a `feedback` memory
   whose content only makes sense in that project's context, even if it
