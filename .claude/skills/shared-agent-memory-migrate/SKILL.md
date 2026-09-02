@@ -39,6 +39,15 @@ Multiple old stores can resolve to the same key — this is the motivating
 case (cwd-based launch scoping fragmenting one project's memory across
 multiple slugs). Group them before touching anything.
 
+**If `<shared-root>/<key>/` already has content, treat that as part of the
+group too** — even when there's only one local store on this host. This
+happens whenever Syncthing has already synced another host's content into
+this key before migration runs here (the expected order: pair Syncthing
+with an existing host *before* running this skill on a new one, so this
+is the common case, not an edge case). A single local store migrating
+into an already-populated key is a same-key merge, not a plain move —
+follow the merge process below.
+
 ## 3. Migrate each group
 
 **Single store, no collision, homogeneous content:** move its memory
@@ -77,6 +86,26 @@ store in the group, and for each memory file / `MEMORY.md` entry:
   about the same topic, show the user both versions and ask how to
   reconcile them — do not silently pick one or concatenate them without
   review.
+
+**Finding duplicate facts across stores is two different checks, not one**
+— independently-authored stores (e.g. the same person's `_personal`
+feedback, separately built up on two different hosts) won't reliably
+share filenames, so a filename match alone misses real duplicates:
+
+1. **Same filename in both stores:** cheap case. Diff the two directly.
+   Identical or near-identical content is a duplicate — keep one. Real
+   differences under a shared filename are a genuine conflict — ask.
+2. **Different filenames, possibly the same fact:** the more likely case
+   across hosts. No filename to lean on, so compare content instead —
+   first pull `name:`/`description:` frontmatter across both stores (cheap
+   to scan for likely matches across many files), then read the full body
+   of any suspected pair before deciding. Same rule as above once a real
+   match is confirmed: identical fact, keep one; genuinely different or
+   complementary, keep both.
+
+Don't skip straight to a full-body diff of everything — with two stores
+of a dozen-plus files each, that's a lot of reading for what the
+frontmatter scan usually resolves in one pass.
 
 **Unresolved (no key, no marker, declined):** move into
 `<shared-root>/_unresolved/<original-slug>/` rather than discarding it.
