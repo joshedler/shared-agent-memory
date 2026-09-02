@@ -87,11 +87,10 @@ them unmentioned or silently removing them.
 
 ## 6. Remove the globally-installed skills
 
-Remove `~/.claude/skills/shared-agent-memory-setup`,
-`~/.claude/skills/shared-agent-memory-migrate`, and
-`~/.claude/skills/shared-agent-memory-uninstall` (the symlinks
-`install.sh` created) — safe,
-they're just symlinks into the repo, not real data.
+Remove every `~/.claude/skills/shared-agent-memory-*` entry that's a
+symlink into this repo (`install.sh` links every `.claude/skills/*/`
+subdirectory it finds, so the exact set can grow — don't hardcode a name
+list here) — safe, they're just symlinks into the repo, not real data.
 
 ## 7. Tell the user what's left
 

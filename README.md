@@ -35,12 +35,15 @@ cross-host recall working).
   Unlike project keys, `_personal` carries no advisory lock: concurrent
   sessions from the home directory are normal, not a handoff to warn
   about. Any other directory that resolves to neither a remote nor a
-  marker is currently just left alone (no memory linking happens at all)
-  rather than guessed at; the plan is a prompt to create a marker file,
-  with a decline falling back to a separate `_unresolved` bucket — kept
-  apart from `_personal` so a project someone just hasn't set up a marker
-  for yet doesn't get mixed in with content that's genuinely
-  host-agnostic — but that prompt flow isn't built yet (see Status).
+  marker still gets linked — under a synthetic `_unresolved/<native-slug>`
+  key, no lock (there's no real cross-host identity to arbitrate for it)
+  — kept apart from `_personal` so a project someone just hasn't set up a
+  marker for yet doesn't get mixed in with content that's genuinely
+  host-agnostic. The first session to hit a given directory this way gets
+  a one-time `additionalContext` prompt suggesting a real
+  `.claude-project-id` marker instead; a sentinel file records that the
+  prompt already happened so it's only ever asked once per directory,
+  whether the answer was to create the marker or to leave it as-is.
 - **Shared root, synced continuously.** One directory tree, one subfolder
   per resolved project key, kept in sync across hosts by
   [Syncthing](https://syncthing.net/) (P2P, encrypted, no server to run,
@@ -186,6 +189,15 @@ above for the exposure tradeoff in Syncthing's own defaults.
 `AGENTS.md` is the same guidance aimed at an agent that's just been pointed
 at this repo cold.
 
+## Updating
+
+`git pull` alone doesn't reach a host's global skill set — `install.sh`'s
+symlinking only ran once, at setup time. A new skill added to
+`.claude/skills/` after that (or any other repo change) needs
+`./install.sh` re-run on each host to pick it up; it's idempotent (already
+correctly-linked skills are left alone), so re-running it after every pull
+is always safe.
+
 ## Testing
 
 Scripts under `core/` and `install.sh` have a `bats` (Bash Automated
@@ -194,10 +206,13 @@ run `mise install` once, then `mise run test`.
 
 Skills (`.claude/skills/shared-agent-memory-setup`,
 `.claude/skills/shared-agent-memory-migrate`,
-`.claude/skills/shared-agent-memory-uninstall`) aren't covered here —
+`.claude/skills/shared-agent-memory-uninstall`,
+`.claude/skills/shared-agent-memory-cross-project`) aren't covered here —
 they're prose instructions an agent interprets, not deterministic
 scripts, so unit tests don't apply. Their real validation is a live
-migration trial against an actual host's existing memory stores.
+migration trial against an actual host's existing memory stores. See
+[`VERIFICATION.md`](VERIFICATION.md) for the checklist of scenarios that
+need a real run to confirm, and which have already had one.
 
 ## Structure
 
@@ -210,7 +225,8 @@ migration trial against an actual host's existing memory stores.
     Claude Code's `shared-agent-memory-setup` skill registers.
 - `.claude/skills/` — the Claude Code skills themselves
   (`shared-agent-memory-setup`, `shared-agent-memory-migrate`,
-  `shared-agent-memory-uninstall`) — prefixed to avoid colliding with any
+  `shared-agent-memory-uninstall`, `shared-agent-memory-cross-project`) —
+  prefixed to avoid colliding with any
   other tool's own generically-named skills once symlinked into the
   user's global `~/.claude/skills/`. Kept at the repo root, not under
   `adapters/`, because that's the specific path Claude Code
@@ -231,15 +247,13 @@ not fit your setup. Two ways to go from here:
 ## Status
 
 Early but working. `core/` (key resolution, symlinking, advisory locking,
-the `_personal` bucket) and the Claude Code `SessionStart`/`Stop` hooks
-are built and tested, and have been run for real, twice: hooks are
-registered on a live host, a clean single-project store and a messy
-mixed home-directory store have both been migrated into the shared root,
-and the hooks were verified end-to-end post-migration in both cases —
-not just first-time linking. Still missing: cross-host sync itself
-(Syncthing hasn't been installed or paired on any host yet, so nothing
-here has actually been exercised across two machines), the
-unresolved-project prompt flow, and status/observability tooling.
+the `_personal` and `_unresolved` buckets) and the Claude Code
+`SessionStart`/`Stop` hooks are built and tested, and have been run for
+real: hooks are registered on multiple live hosts, several per-project
+and mixed home-directory stores have been migrated into the shared root,
+and Syncthing has synced the shared root bidirectionally between two
+real hosts — not just exercised in isolation. Still missing:
+status/observability tooling, and a hook-run logging strategy.
 
 ## License
 

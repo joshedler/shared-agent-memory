@@ -52,7 +52,7 @@ write_hook_input() {
   [ "$(cat "${state_file}")" = "github.com/example-org/example-repo" ]
 }
 
-@test "does nothing for an unresolved project (no remote, no marker file)" {
+@test "links an unresolved project into _unresolved by native slug and prompts once" {
   unresolved_dir="${scratch}/unresolved-project"
   mkdir -p "${unresolved_dir}"
   write_hook_input "${unresolved_dir}" "session-xyz"
@@ -60,11 +60,46 @@ write_hook_input() {
   run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
 
   [ "${status}" -eq 0 ]
+  [ -n "${output}" ]
+
+  context="$(jq -r '.hookSpecificOutput.additionalContext' <<<"${output}")"
+  [[ "${context}" == *"marker file"* ]]
+  [[ "${context}" == *"_unresolved"* ]]
+
+  slug="$("${BATS_TEST_DIRNAME}/../adapters/claude-code/hooks/lib/project-slug.sh" "${unresolved_dir}")"
+  memory_path="${HOME}/.claude/projects/${slug}/memory"
+  target="${SHARED_AGENT_MEMORY_ROOT}/_unresolved/${slug}"
+
+  [ -L "${memory_path}" ]
+  [ "$(readlink -f "${memory_path}")" = "$(readlink -f "${target}")" ]
+  [ ! -f "${target}/.lock" ]
+
+  state_file="${HOME}/.local/state/shared-agent-memory/sessions/session-xyz.key"
+  [ -f "${state_file}" ]
+  [ "$(cat "${state_file}")" = "_unresolved/${slug}" ]
+
+  prompted_file="${HOME}/.local/state/shared-agent-memory/unresolved/${slug}.prompted"
+  [ -f "${prompted_file}" ]
+}
+
+@test "stays silent on a second session for the same unresolved directory" {
+  unresolved_dir="${scratch}/unresolved-project"
+  mkdir -p "${unresolved_dir}"
+  write_hook_input "${unresolved_dir}" "session-first"
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+  [ "${status}" -eq 0 ]
+  [ -n "${output}" ]
+
+  write_hook_input "${unresolved_dir}" "session-second"
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+
+  [ "${status}" -eq 0 ]
   [ -z "${output}" ]
 
-  # no side effects at all
-  [ ! -d "${SHARED_AGENT_MEMORY_ROOT}" ]
-  [ ! -f "${HOME}/.local/state/shared-agent-memory/sessions/session-xyz.key" ]
+  slug="$("${BATS_TEST_DIRNAME}/../adapters/claude-code/hooks/lib/project-slug.sh" "${unresolved_dir}")"
+  state_file="${HOME}/.local/state/shared-agent-memory/sessions/session-second.key"
+  [ -f "${state_file}" ]
+  [ "$(cat "${state_file}")" = "_unresolved/${slug}" ]
 }
 
 @test "surfaces a lock conflict as additionalContext" {

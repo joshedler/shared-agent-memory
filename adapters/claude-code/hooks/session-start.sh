@@ -6,7 +6,12 @@
 #    key, links Claude Code's native memory path into the shared root, and
 #    acquires the advisory lock. Silent (no stdout) when everything is
 #    clean; only emits additionalContext JSON when there's something worth
-#    telling the user about.
+#    telling the user about. A directory with no git remote and no
+#    .claude-project-id marker still gets linked, under a synthetic
+#    '_unresolved/<native-slug>' key (no lock -- there's no real cross-host
+#    identity to arbitrate) -- and the first time that happens for a given
+#    directory, additionalContext carries a one-time prompt to create a
+#    real marker file instead.
 #
 # Usage:
 #
@@ -122,7 +127,8 @@ function help() {
   echo "  Claude Code SessionStart hook. Reads hook JSON from stdin, links" 1>&2
   echo "  memory and acquires the advisory lock for the resolved project." 1>&2
   echo "  Silent on success; emits additionalContext JSON only when there's" 1>&2
-  echo "  a refusal or lock conflict to relay." 1>&2
+  echo "  a refusal, a lock conflict, or a one-time unresolved-project" 1>&2
+  echo "  prompt to relay." 1>&2
   echo "" 1>&2
   exit 1
 }
@@ -222,9 +228,11 @@ debug "SessionStart: cwd=${cwd} session_id=${session_id}"
 slug="$("${__dir}/lib/project-slug.sh" "${cwd}")"
 memory_path="${HOME}/.claude/projects/${slug}/memory"
 
+unresolved=0
 if ! project_key="$("${core_dir}/resolve-key.sh" "${cwd}" 2>/dev/null)"; then
-  debug "No resolvable project key for ${cwd} yet, nothing to do"
-  exit 0
+  debug "No resolvable project key for ${cwd}, falling back to _unresolved bucket"
+  project_key="_unresolved/${slug}"
+  unresolved=1
 fi
 
 debug "Resolved project key: ${project_key}"
@@ -243,10 +251,23 @@ if ((link_status != 0)); then
 fi
 rm -f "${link_err_file}"
 
-if [[ "${project_key}" = "_personal" ]]; then
+if [[ "${project_key}" = "_personal" ]] || ((unresolved)); then
   mkdir -p "${sessions_dir}"
   printf '%s\n' "${project_key}" >"${sessions_dir}/${session_id}.key"
-  info "SessionStart complete for _personal (session ${session_id}, always-synced -- no lock)"
+
+  if ((unresolved)); then
+    prompted_dir="${HOME}/.local/state/shared-agent-memory/unresolved"
+    prompted_file="${prompted_dir}/${slug}.prompted"
+
+    if [[ ! -f "${prompted_file}" ]]; then
+      mkdir -p "${prompted_dir}"
+      touch "${prompted_file}"
+      jq -n --arg ctx "shared-agent-memory: '${cwd}' has no git remote and no .claude-project-id marker file, so its memory is only linked into the local '${project_key}' bucket for now -- it won't sync to other hosts under a real project key. Want me to create a marker file here so it gets one? (Only asking once for this directory; declining just leaves it in _unresolved.)" \
+        '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
+    fi
+  fi
+
+  info "SessionStart complete for ${project_key} (session ${session_id}, always-synced -- no lock)"
   exit 0
 fi
 
