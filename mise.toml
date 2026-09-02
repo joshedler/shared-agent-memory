@@ -1,0 +1,7 @@
+[tools]
+bats = "1.14.0"
+jq = "1.8.2"
+
+[tasks.test]
+description = "Run the bats test suite"
+run = "bats test/"

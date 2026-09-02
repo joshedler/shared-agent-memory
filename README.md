@@ -1,0 +1,199 @@
+# shared-agent-memory
+
+Give a coding agent's persistent memory the ability to follow you across
+machines, instead of being pinned to wherever a session happened to start.
+
+## The problem
+
+Many coding agents keep a persistent memory store as plain files on disk,
+scoped per project or per launch directory. Two things go wrong with that:
+
+1. **Same-host fragmentation.** If a tool scopes memory by the directory a
+   session was *launched* from rather than the project actually being worked
+   on, the same project silently accumulates multiple, non-overlapping
+   memory stores depending on where you happened to start the session.
+2. **No cross-host continuity.** Memory lives on one machine. Picking up the
+   same project from a different machine starts from zero context, even
+   though another host may hold real, relevant history about that exact
+   project.
+
+## Approach
+
+This is a file-sync problem, not an AI-memory-product problem — the agent
+already turns conversation into structured memory files as part of normal
+operation, so there's no need for a separate extraction/embedding pipeline
+(and no need to send conversation content to any third-party service to get
+cross-host recall working).
+
+- **Project key resolution.** Each project resolves to one canonical key,
+  computed the same way on every host: primarily the project's git remote
+  URL (canonicalized so ssh and https forms match), falling back to an
+  explicit marker file for projects with no remote. A session launched from
+  the home directory itself (not inside any project) resolves to a
+  reserved `_personal` key instead — the always-synced, host-agnostic home
+  for feedback/behavior memories that aren't tied to a specific project.
+  Unlike project keys, `_personal` carries no advisory lock: concurrent
+  sessions from the home directory are normal, not a handoff to warn
+  about. Any other directory that resolves to neither a remote nor a
+  marker is currently just left alone (no memory linking happens at all)
+  rather than guessed at; the plan is a prompt to create a marker file,
+  with a decline falling back to a separate `_unresolved` bucket — kept
+  apart from `_personal` so a project someone just hasn't set up a marker
+  for yet doesn't get mixed in with content that's genuinely
+  host-agnostic — but that prompt flow isn't built yet (see Status).
+- **Shared root, synced continuously.** One directory tree, one subfolder
+  per resolved project key, kept in sync across hosts by
+  [Syncthing](https://syncthing.net/) (P2P, encrypted, no server to run,
+  syncs in the background so hosts don't need to be online at the same
+  time).
+- **Nested project directories, not flattened.** A resolved key that
+  contains real path separators (e.g. a git host's `host/owner/repo`)
+  becomes real nested directories under the shared root, not a single
+  flattened folder name. A git host's own naming rules already guarantee
+  filesystem-safe characters in each segment, so there's no need for an
+  escaping or flattening scheme — and flattening (e.g. collapsing `/` to
+  `-`) would introduce exactly the kind of collision risk this project
+  otherwise avoids: two different projects silently mapping to the same
+  folder. Nesting also means every local checkout of the same remote (a
+  second clone, a worktree, a differently-named directory) resolves to
+  the same key and therefore the same shared folder, and it mirrors an
+  established convention (e.g. Go's `$GOPATH/src/<host>/<owner>/<repo>`
+  workspace layout) rather than inventing a new one.
+- **Symlink, not copy.** On a host, the agent's own per-project memory path
+  is replaced with a symlink into the shared root's matching subfolder.
+  Nothing about how the agent reads or writes memory files changes — the
+  only new logic is resolving the key and managing the symlink.
+- **Advisory lock, not distributed consensus.** Because the shared root is
+  only eventually consistent, a hard cross-host lock isn't achievable and
+  isn't the goal — the real goal is sequential handoff between hosts (work
+  on host A, then pick up on host B), not simultaneous editing from two
+  hosts at once. A lock file in each project's subfolder records which host
+  last opened a session there and when, so a new session on another host
+  can warn ("active session on `<host>` as of `<time>`") rather than either
+  blocking outright or silently forking context. A configurable TTL
+  (default 4 hours) keeps a crashed or sleeping host from leaving a
+  permanent phantom lock; reclaiming a stale lock is surfaced to the user,
+  not silent, using the same relay mechanism as a live conflict.
+- **Layered behavior memory.** Feedback/behavior-type memories (how you
+  expect the agent to work — not project facts) can carry an optional
+  `hosts:` scope, defaulting to "applies everywhere" when unset. The most
+  specific match wins: a memory scoped to one host *and* one project beats
+  one scoped to just the project, which beats an unscoped global default.
+  Everything stays in the synced store regardless of scope, so every host
+  can see the full picture — including exceptions that don't apply to it —
+  rather than exceptions being silently invisible on other hosts. **This is
+  a simplicity/commonality trade-off, not a proven mechanism** — worth
+  revisiting if it doesn't hold up once there's real layered behavior
+  memory to test it against.
+- **Status/observability tooling.** A plain script (agent-agnostic, usable
+  outside Claude Code, cron-able) reports per-project subfolder size and
+  last-modified time, total shared-root size, per-host lock state, and
+  Syncthing's own sync/conflict status where queryable. A thin Claude Code
+  skill wraps it so it can be asked for conversationally rather than by
+  remembering command syntax.
+
+## Migration
+
+Existing per-project-launch-directory memory stores need one-time porting
+into the shared root before this is usable. Where multiple old stores
+resolve to the same project key, they're merged with a human reviewing any
+conflicting facts, not auto-collapsed. Whatever a migrated-from directory
+held is moved to a dedicated out-of-band backup location (outside
+`~/.claude/projects/`, the shared root, and this repo) rather than left
+alongside the new symlink or deleted.
+
+A memory store launched from the home directory is a special case: it's
+rarely *all* `_personal` content, since nothing stops project-relevant
+facts from ending up there too (e.g. a fact learned about a project while
+poking around from home rather than inside its checkout). The migration
+skill covers this — splitting such a store file-by-file, with
+project-specific facts going to their own resolved keys and the rest to
+`_personal` — and it's been run for real, not just designed: a host's
+actual mixed home-directory store, with a couple dozen files split across
+four different project keys plus `_personal`, migrated cleanly.
+
+## Non-goals
+
+- **Reconciling memory across different agent products.** This project
+  assumes every host in the mesh is running the same agent tool (today:
+  Claude Code, via `adapters/claude-code/`). Mixing different coding agents
+  and expecting them to share one memory pool isn't handled and shouldn't be
+  assumed to work.
+- **Enforcing a specific network topology for Syncthing.** No particular
+  setup (LAN, Tailscale/Headscale, public relays) is required or assumed.
+  Syncthing has defaults (global discovery, relay servers) that are riskier
+  than a fully private mesh — anything that touches setup here should point
+  that out and note a private mesh (e.g. Tailscale/Headscale) as one safe
+  option, but the actual exposure choice is the user's to make.
+
+## Getting started
+
+1. `./install.sh` — creates the shared memory root (default
+   `~/.claude-shared-memory`) and symlinks `.claude/skills/*` into
+   `~/.claude/skills/` so they're available from any session on this host.
+2. In Claude Code, run the `shared-agent-memory-setup` skill to register
+   this host's hooks and confirm the shared root — it hands off to
+   `shared-agent-memory-migrate` automatically if this host has
+   pre-existing per-project memory stores to port in.
+
+`AGENTS.md` is the same guidance aimed at an agent that's just been pointed
+at this repo cold.
+
+## Testing
+
+Scripts under `core/` and `install.sh` have a `bats` (Bash Automated
+Testing System) suite in `test/`. `mise.toml` pins the `bats` version —
+run `mise install` once, then `mise run test`.
+
+Skills (`.claude/skills/shared-agent-memory-setup`,
+`.claude/skills/shared-agent-memory-migrate`,
+`.claude/skills/shared-agent-memory-uninstall`) aren't covered here —
+they're prose instructions an agent interprets, not deterministic
+scripts, so unit tests don't apply. Their real validation is a live
+migration trial against an actual host's existing memory stores.
+
+## Structure
+
+- `core/` — agent-agnostic pieces: project key resolution, the shared-root
+  layout convention, and lock semantics. No dependency on any specific
+  coding agent.
+- `adapters/` — thin integrations that wire the core mechanism into a
+  specific agent's actual memory path and lifecycle hooks.
+  - `adapters/claude-code/hooks/` — the `SessionStart`/`Stop` hook scripts
+    Claude Code's `shared-agent-memory-setup` skill registers.
+- `.claude/skills/` — the Claude Code skills themselves
+  (`shared-agent-memory-setup`, `shared-agent-memory-migrate`,
+  `shared-agent-memory-uninstall`) — prefixed to avoid colliding with any
+  other tool's own generically-named skills once symlinked into the
+  user's global `~/.claude/skills/`. Kept at the repo root, not under
+  `adapters/`, because that's the specific path Claude Code
+  auto-discovers project-scoped skills from.
+- `docs/` — design notes.
+
+## Want something different?
+
+This bakes in a specific set of trade-offs (see Non-goals above) that may
+not fit your setup. Two ways to go from here:
+
+- **Fork it.** The core/adapter split exists so you can point an agent at
+  your fork and have it build out what's specific to your needs — a
+  different agent adapter, a different transport than Syncthing, a
+  different behavior-layering model.
+- **Open an issue.** Suggestions and bug reports are welcome.
+
+## Status
+
+Early but working. `core/` (key resolution, symlinking, advisory locking,
+the `_personal` bucket) and the Claude Code `SessionStart`/`Stop` hooks
+are built and tested, and have been run for real, twice: hooks are
+registered on a live host, a clean single-project store and a messy
+mixed home-directory store have both been migrated into the shared root,
+and the hooks were verified end-to-end post-migration in both cases —
+not just first-time linking. Still missing: cross-host sync itself
+(Syncthing hasn't been installed or paired on any host yet, so nothing
+here has actually been exercised across two machines), the
+unresolved-project prompt flow, and status/observability tooling.
+
+## License
+
+MIT — see `LICENSE`.
