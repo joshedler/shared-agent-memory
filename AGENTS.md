@@ -18,6 +18,12 @@ Run `./install.sh` from the repo root. It creates the shared memory root
 `.claude/skills/` into `~/.claude/skills/`, so they're available from any
 session on this host afterward, not just ones launched inside this repo.
 
+**If another host is already running `shared-agent-memory` with real
+content**, don't run `install.sh` yet — pair Syncthing with that host
+first. See `README.md`'s "Getting started" section for the install/pairing
+steps; the `shared-agent-memory-setup` skill's step 0 covers the same
+check.
+
 ## What to do next
 
 Run the `shared-agent-memory-setup` skill

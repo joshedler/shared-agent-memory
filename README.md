@@ -128,6 +128,8 @@ four different project keys plus `_personal`, migrated cleanly.
 
 ## Getting started
 
+**First host:**
+
 1. `./install.sh` — creates the shared memory root (default
    `~/.claude-shared-memory`) and symlinks `.claude/skills/*` into
    `~/.claude/skills/` so they're available from any session on this host.
@@ -135,6 +137,51 @@ four different project keys plus `_personal`, migrated cleanly.
    this host's hooks and confirm the shared root — it hands off to
    `shared-agent-memory-migrate` automatically if this host has
    pre-existing per-project memory stores to port in.
+
+**Each additional host — pair Syncthing with an existing host *before*
+running setup here, not after:**
+
+`shared-agent-memory-setup`'s migration step compares this new host's own
+pre-existing memory against whatever's already at each shared-root key.
+If Syncthing hasn't synced anything in yet, migration only has this
+host's own content to look at — a real cross-host merge (e.g. two
+independently-built `_personal` stores, one per host) can't be evaluated
+properly, and content that should have been reconciled against what
+another host already has just gets treated as new.
+
+1. Install Syncthing on both hosts — see
+   [syncthing.net/downloads](https://syncthing.net/downloads/) for your
+   platform's package. Run it as a background service (Syncthing's own
+   docs cover autostart for your OS/init system); on Linux with systemd
+   that's typically a `syncthing` user service (start on login) or a
+   `syncthing@<username>` system service (start at boot regardless of
+   login) — pick based on whether the host is normally logged-in-and-running.
+2. Open the web GUI (`http://localhost:8384` by default) on each host,
+   **Actions → Show ID**, to get each host's Device ID.
+3. **Set a GUI password on each host** — **Actions → Settings → GUI**,
+   fill in a username and password under Authentication, save. Syncthing's
+   web GUI and REST API have no authentication by default, and anything
+   that can reach `localhost:8384` can read/write your synced memory
+   through it — worth doing before pairing, not after.
+4. On each host, **Add Remote Device** with the *other* host's Device ID
+   — this is mutual, both sides need to add each other. Accept the
+   "device wants to connect" prompt that appears on the other side after
+   a short delay.
+5. On one host, add/edit the shared memory root folder (default
+   `~/.claude-shared-memory`, or wherever `--root` pointed it during
+   `install.sh`), open its **Sharing** tab, check the other device, save.
+   Accept the incoming folder-share prompt on the other host, confirming
+   its own local path.
+6. Confirm both sides show the folder "Up to Date" with matching item
+   counts before continuing.
+7. Only now run `./install.sh` and the `shared-agent-memory-setup` skill
+   on the new host — migration will see the already-synced content and
+   can merge against it properly.
+
+If the two hosts aren't on the same LAN, you may need `22000/TCP` +
+`22000/UDP` open for sync traffic and `21027/UDP` for local discovery;
+same-LAN pairing usually needs nothing opened. See the Non-goals section
+above for the exposure tradeoff in Syncthing's own defaults.
 
 `AGENTS.md` is the same guidance aimed at an agent that's just been pointed
 at this repo cold.
