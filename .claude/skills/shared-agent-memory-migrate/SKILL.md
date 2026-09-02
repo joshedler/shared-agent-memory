@@ -22,8 +22,17 @@ For each `~/.claude/projects/<slug>/memory/` that has content:
   neither exists, this store's content is a candidate for the
   `_unresolved/` bucket rather than a project key — flag it and ask the
   user rather than guessing.
-- If the original directory no longer exists at all, or the store has no
-  memory files (just session transcripts), skip it — nothing to migrate.
+- If the original directory no longer exists at all, skip it — nothing to
+  migrate, nothing to clean up.
+- If it still exists but the `memory/` subdirectory itself has no memory
+  files in it (whether or not session transcripts sit alongside it in the
+  parent `~/.claude/projects/<slug>/` directory — those are untouched
+  either way, not this tool's concern), remove the empty `memory/`
+  directory rather than leaving it in place. An empty non-symlink
+  directory still blocks `link-memory.sh` from creating a fresh symlink
+  on every future session launched from there — and since there's no
+  content at risk inside `memory/`, the backup-first caution in step 4
+  doesn't apply here.
 
 The store launched from the home directory itself resolves to the
 reserved `_personal` key (see `core/resolve-key.sh`), not `_unresolved` —
@@ -111,6 +120,12 @@ store in the group, and for each memory file / `MEMORY.md` entry:
 
 - If it exists in only one store, keep it.
 - If the same fact appears in multiple stores, keep one copy.
+- If one version is a strict superset of the other (a diff shows only
+  pure additions past a shared prefix — nothing removed, nothing
+  reworded), that's not a conflict, just staleness: keep the superset
+  automatically, no need to ask. This is the common shape for the same
+  feedback memory continuing to accumulate instances on one host after a
+  shared seed — the older copy isn't wrong, just behind.
 - If stores genuinely disagree, or cover different non-overlapping ground
   about the same topic, show the user both versions and ask how to
   reconcile them — do not silently pick one or concatenate them without
@@ -122,8 +137,11 @@ feedback, separately built up on two different hosts) won't reliably
 share filenames, so a filename match alone misses real duplicates:
 
 1. **Same filename in both stores:** cheap case. Diff the two directly.
-   Identical or near-identical content is a duplicate — keep one. Real
-   differences under a shared filename are a genuine conflict — ask.
+   Identical is a duplicate — keep one. If the diff is pure appends past
+   a shared prefix (one strictly contains the other), that's a superset,
+   not a conflict — keep the newer/fuller one automatically. Only a diff
+   with actual removals or rewrites past that shared prefix is a genuine
+   conflict — ask.
 2. **Different filenames, possibly the same fact:** the more likely case
    across hosts. No filename to lean on, so compare content instead —
    first pull `name:`/`description:` frontmatter across both stores (cheap
@@ -154,3 +172,9 @@ later, once they've confirmed the migration captured everything correctly.
 
 Summarize what moved where, what got merged (and what judgment calls were
 made), and what's sitting in `_unresolved/` awaiting a real key.
+
+Flag separately: any migrated file that documents shared-agent-memory's own
+setup/install state on this host (e.g. "hooks installed but paused pending
+X") — that kind of memory self-invalidates the moment migration actually
+runs, so call it out as likely needing retirement rather than silently
+carrying it forward as if it were still durable fact.
