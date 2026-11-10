@@ -71,7 +71,7 @@ first-run prompts.
   `~/.claude/rules` link either replaced with a real copy of `_rules/` or
   removed (your choice), and shared-root / backup data left alone for
   manual removal.
-- ◻ **Shared rules load in every session.** With `~/.claude/rules` linked
+- ✅ verified — **Shared rules load in every session.** With `~/.claude/rules` linked
   to `<shared-root>/_rules` by `install.sh`, start sessions from a
   resolved project, from `$HOME`, and from an unresolved directory.
   Expect: `/memory` (or `/status`) lists the `_rules/` files as loaded in
