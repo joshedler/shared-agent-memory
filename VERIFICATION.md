@@ -25,14 +25,15 @@ first-run prompts.
 
 ## Setup and migration
 
-- ◻ **Fresh host, no prior state.** On a host with no `~/.claude-shared-memory`
-  and no shared-agent-memory hooks registered: run the
-  `shared-agent-memory-setup` skill. Expect: shared root created (default
-  `~/.claude-shared-memory` unless told otherwise), `SessionStart`/`Stop`
-  hooks present in `~/.claude/settings.json`, and — only if pre-existing
-  per-launch-directory memory stores are found under `~/.claude/projects/`
-  — an offer (not an automatic run) of the `shared-agent-memory-migrate`
-  skill.
+- ✅ verified — **Fresh host, no prior state.** On a host with no
+  `~/.claude-shared-memory` and no shared-agent-memory hooks registered:
+  run the `shared-agent-memory-setup` skill. Expect: shared root created
+  (default `~/.claude-shared-memory` unless told otherwise),
+  `SessionStart`/`Stop` hooks present in `~/.claude/settings.json`, and —
+  only if pre-existing per-launch-directory memory stores are found under
+  `~/.claude/projects/` — an offer (not an automatic run) of the
+  `shared-agent-memory-migrate` skill. This is this tool's own first-host
+  bootstrap, not a separate trial run.
 - ✅ verified — **Second host, paired via Syncthing first.** Pair Syncthing
   between `<host-a>` (already running shared-agent-memory with real
   content) and `<host-b>` (new) *before* running setup on `<host-b>`.
@@ -90,15 +91,13 @@ first-run prompts.
   Expect: the next `SessionStart` for that project reports
   `stale-reclaimed` and proceeds normally rather than treating it as a
   live conflict.
-- ◻ **Unresolved-directory prompt flow.** Launch a session from a
-  directory with no git remote and no `.claude-project-id` marker. Expect:
-  memory links under a synthetic `_unresolved/<native-slug>` key (no
-  lock), and the *first* such session emits a one-time `additionalContext`
-  suggesting a real marker file. A second session from the same directory
-  should not repeat the prompt (check the sentinel under
-  `~/.local/state/shared-agent-memory/unresolved/`). Unit-tested (bats),
-  but not yet run against a real piped `SessionStart` payload for a real
-  unresolved directory — still open.
+- ✅ verified — **Unresolved-directory prompt flow.** Launch a session from
+  a directory with no git remote and no `.claude-project-id` marker.
+  Expect: memory links under a synthetic `_unresolved/<native-slug>` key
+  (no lock), and the *first* such session emits a one-time
+  `additionalContext` suggesting a real marker file. A second session from
+  the same directory should not repeat the prompt (check the sentinel
+  under `~/.local/state/shared-agent-memory/unresolved/`).
 - ◻ **`_personal` bucket, concurrent sessions.** Launch two sessions from
   `$HOME` itself at the same time. Expect: both resolve to `_personal`,
   neither reports a lock conflict — concurrent home-launched sessions are
