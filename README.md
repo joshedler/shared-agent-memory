@@ -44,6 +44,15 @@ cross-host recall working).
   `.claude-project-id` marker instead; a sentinel file records that the
   prompt already happened so it's only ever asked once per directory,
   whether the answer was to create the marker or to leave it as-is.
+- **Standing rules for every session.** A reserved `_rules/` bucket at the
+  shared root holds working rules meant to apply on every host and in
+  every project, not just one project's sessions or home-launched ones.
+  `install.sh` symlinks Claude Code's user-level rules directory,
+  `~/.claude/rules`, to it, so Claude Code's own rules loading picks the
+  files up in every session — no hook involved, same "symlink, not copy"
+  approach as memory. Claude Code reads that directory recursively, so
+  anything in `_rules/` (subdirectories included) is loaded; keep
+  archived or draft rules outside it.
 - **Shared root, synced continuously.** One directory tree, one subfolder
   per resolved project key, kept in sync across hosts by
   [Syncthing](https://syncthing.net/) (P2P, encrypted, no server to run,
@@ -134,12 +143,15 @@ four different project keys plus `_personal`, migrated cleanly.
 **First host:**
 
 1. `./install.sh` — creates the shared memory root (default
-   `~/.claude-shared-memory`) and symlinks `.claude/skills/*` into
-   `~/.claude/skills/` so they're available from any session on this host.
+   `~/.claude-shared-memory`), symlinks `.claude/skills/*` into
+   `~/.claude/skills/` so they're available from any session on this host,
+   links `~/.claude/rules` to the shared root's `_rules/`, and records
+   this repo's install version for the host.
 2. In Claude Code, run the `shared-agent-memory-setup` skill to register
-   this host's hooks and confirm the shared root — it hands off to
-   `shared-agent-memory-migrate` automatically if this host has
-   pre-existing per-project memory stores to port in.
+   this host's hooks — it runs `install.sh` itself first if step 1 was
+   skipped or is out of date, and hands off to `shared-agent-memory-migrate`
+   automatically if this host has pre-existing per-project memory stores
+   to port in.
 
 **Each additional host — pair Syncthing with an existing host *before*
 running setup here, not after:**
@@ -191,12 +203,22 @@ at this repo cold.
 
 ## Updating
 
-`git pull` alone doesn't reach a host's global skill set — `install.sh`'s
-symlinking only ran once, at setup time. A new skill added to
-`.claude/skills/` after that (or any other repo change) needs
-`./install.sh` re-run on each host to pick it up; it's idempotent (already
-correctly-linked skills are left alone), so re-running it after every pull
-is always safe.
+`git pull` alone doesn't reach a host's global setup — `install.sh`'s
+symlinking only ran once, at install time. A new skill added to
+`.claude/skills/` after that, or a new link `install.sh` manages, needs
+`./install.sh` re-run on each host to pick it up.
+
+You don't have to remember which pulls need that. The repo's
+`install-version` file holds a number, bumped by any change that needs a
+re-run; a clean `install.sh` run records it for the host under
+`~/.local/state/shared-agent-memory/`. Because the `SessionStart` hook
+runs straight from the repo checkout, it sees a pull immediately, and
+when the host's recorded number is missing or behind, every session
+says so (to you and to the agent) until `./install.sh` is re-run. A run
+that skips anything (a skill or link blocked by something already in
+the way) doesn't record the number, so the reminder stays until it's
+resolved. Re-running `install.sh` is idempotent, so doing it after every
+pull is always safe too.
 
 ## Testing
 

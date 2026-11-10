@@ -4,6 +4,11 @@
 #  - Bootstraps shared-agent-memory on this host: creates the shared
 #    memory root and symlinks this repo's skills into ~/.claude/skills so
 #    they're available from any session, not just ones launched here.
+#    Also symlinks ~/.claude/rules to the shared root's _rules/ bucket,
+#    so Claude Code loads the shared working rules in every session.
+#    When nothing was skipped, records this repo's install-version for
+#    the host, which the SessionStart hook compares against to tell the
+#    user when a pull needs install.sh re-run.
 #
 # Usage:
 #
@@ -187,7 +192,12 @@ EOF
  Creates the shared-agent-memory root directory if it doesn't exist yet,
  and symlinks this repo's .claude/skills/* into ~/.claude/skills/ so
  they're discoverable from any session, not just ones launched inside
- this repo. Does not touch ~/.claude/settings.json — hook registration
+ this repo. Symlinks ~/.claude/rules to the shared root's _rules/
+ bucket, so Claude Code loads the shared working rules in every session.
+ When nothing was skipped, records this repo's install-version under
+ ~/.local/state/shared-agent-memory/, so the SessionStart hook can tell
+ you when a later pull needs this re-run. Safe to re-run any time.
+ Does not touch ~/.claude/settings.json — hook registration
  is handled by the 'shared-agent-memory-setup' skill (run it in Claude Code after this).
 EOF
 
@@ -489,6 +499,16 @@ fi
 ##############################################################################
 
 shared_root="${arg_r:-${HOME}/.claude-shared-memory}"
+state_dir="${HOME}/.local/state/shared-agent-memory"
+
+install_version_file="${__dir}/install-version"
+[[ -f "${install_version_file}" ]] || fatal "Missing ${install_version_file}"
+install_version="$(tr -d '[:space:]' <"${install_version_file}")"
+[[ "${install_version}" =~ ^[0-9]+$ ]] || fatal "${install_version_file} must hold a whole number, got '${install_version}'"
+
+# Set when anything is skipped, so the install version isn't recorded and
+# the SessionStart hook keeps saying this host needs a re-run.
+incomplete=0
 
 info "Shared memory root: ${shared_root}"
 
@@ -518,6 +538,7 @@ else
 
     if [[ -e "${dest}" ]]; then
       warning "Skipping '${skill_name}': ${dest} already exists and isn't a link to this repo"
+      incomplete=1
       continue
     fi
 
@@ -526,5 +547,32 @@ else
   done
 fi
 
-notice "Install complete."
+rules_src="${shared_root}/_rules"
+rules_dest="${HOME}/.claude/rules"
+
+if [[ ! -d "${rules_src}" ]]; then
+  mkdir -p "${rules_src}"
+  notice "Created shared rules bucket at ${rules_src}"
+fi
+mkdir -p "$(dirname "${rules_dest}")"
+
+if [[ -L "${rules_dest}" ]] && [[ "$(readlink -f "${rules_dest}")" = "$(readlink -f "${rules_src}")" ]]; then
+  info "Rules already linked"
+elif [[ -e "${rules_dest}" ]] || [[ -L "${rules_dest}" ]]; then
+  warning "Skipping rules link: ${rules_dest} already exists and isn't a link to ${rules_src}. Move any rule files you want to keep into ${rules_src}, remove ${rules_dest}, and re-run."
+  incomplete=1
+else
+  ln -s "${rules_src}" "${rules_dest}"
+  notice "Linked rules ${rules_dest} -> ${rules_src}"
+fi
+
+if ((incomplete)); then
+  warning "Something above was skipped, so this host's install version wasn't recorded. Sessions will keep reporting that install.sh needs a re-run until it completes cleanly."
+else
+  mkdir -p "${state_dir}"
+  printf '%s\n' "${install_version}" >"${state_dir}/installed-version"
+  info "Recorded install version ${install_version}"
+  notice "Install complete."
+fi
+
 notice "Next: open Claude Code anywhere and ask it to run the 'shared-agent-memory-setup' skill to finish (registers hooks, confirms the shared root, offers to migrate existing memory)."

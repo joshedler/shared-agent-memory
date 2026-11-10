@@ -14,6 +14,13 @@ setup() {
   mkdir -p "${project_dir}"
   git -C "${project_dir}" init -q
   git -C "${project_dir}" remote add origin git@github.com:example-org/example-repo.git
+
+  # Record the repo's current install version, as a clean install.sh run
+  # would, so tests not about the install check see a current host.
+  required_version="$(tr -d '[:space:]' <"${BATS_TEST_DIRNAME}/../install-version")"
+  installed_version_file="${HOME}/.local/state/shared-agent-memory/installed-version"
+  mkdir -p "$(dirname "${installed_version_file}")"
+  printf '%s\n' "${required_version}" >"${installed_version_file}"
 }
 
 teardown() {
@@ -186,4 +193,107 @@ write_hook_input() {
   # nothing was touched
   [ ! -L "${memory_path}" ]
   [ -f "${memory_path}/some_fact.md" ]
+}
+
+# --- install version check ----------------------------------------------------
+
+@test "tells Claude and the user to re-run install.sh when no install version is recorded" {
+  rm -f "${installed_version_file}"
+  write_hook_input "${project_dir}" "session-abc"
+
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+
+  [ "${status}" -eq 0 ]
+  context="$(jq -r '.hookSpecificOutput.additionalContext' <<<"${output}")"
+  [[ "${context}" == *"install.sh"* ]]
+  [[ "${context}" == *"recorded install version 0"* ]]
+  [[ "${context}" == *"Before responding to the user's first message"* ]]
+  message="$(jq -r '.systemMessage' <<<"${output}")"
+  [[ "${message}" == *"ACTION NEEDED"*"Run ./install.sh"* ]]
+
+  # the session itself still proceeds normally
+  target="${SHARED_AGENT_MEMORY_ROOT}/github.com/example-org/example-repo"
+  grep -qx "session_id=session-abc" "${target}/.lock"
+}
+
+@test "tells Claude and the user to re-run install.sh when the recorded version is behind" {
+  printf '%s\n' "$((required_version - 1))" >"${installed_version_file}"
+  write_hook_input "${project_dir}" "session-abc"
+
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+
+  [ "${status}" -eq 0 ]
+  context="$(jq -r '.hookSpecificOutput.additionalContext' <<<"${output}")"
+  [[ "${context}" == *"repo needs ${required_version}"* ]]
+  [ "$(jq -r 'has("systemMessage")' <<<"${output}")" = "true" ]
+}
+
+@test "treats a malformed recorded version as out of date" {
+  printf 'garbage\n' >"${installed_version_file}"
+  write_hook_input "${project_dir}" "session-abc"
+
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+
+  [ "${status}" -eq 0 ]
+  context="$(jq -r '.hookSpecificOutput.additionalContext' <<<"${output}")"
+  [[ "${context}" == *"recorded install version 0"* ]]
+}
+
+@test "stays silent when the recorded version is ahead of the repo" {
+  printf '%s\n' "$((required_version + 1))" >"${installed_version_file}"
+  write_hook_input "${project_dir}" "session-abc"
+
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+}
+
+@test "combines an out-of-date install with a lock conflict in one JSON object" {
+  rm -f "${installed_version_file}"
+  target="${SHARED_AGENT_MEMORY_ROOT}/github.com/example-org/example-repo"
+  mkdir -p "${target}"
+  {
+    printf 'host=other-host\n'
+    printf 'session_id=other-session\n'
+    printf 'acquired_at=%s\n' "$(date +%s)"
+  } >"${target}/.lock"
+  write_hook_input "${project_dir}" "session-abc"
+
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+
+  [ "${status}" -eq 0 ]
+  [ "$(jq -s 'length' <<<"${output}")" -eq 1 ]
+  context="$(jq -r '.hookSpecificOutput.additionalContext' <<<"${output}")"
+  [[ "${context}" == *"install.sh"*"other-host"* ]]
+}
+
+@test "combines an out-of-date install with the unresolved prompt in one JSON object" {
+  rm -f "${installed_version_file}"
+  unresolved_dir="${scratch}/unresolved-project"
+  mkdir -p "${unresolved_dir}"
+  write_hook_input "${unresolved_dir}" "session-xyz"
+
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+
+  [ "${status}" -eq 0 ]
+  [ "$(jq -s 'length' <<<"${output}")" -eq 1 ]
+  context="$(jq -r '.hookSpecificOutput.additionalContext' <<<"${output}")"
+  [[ "${context}" == *"install.sh"*"marker file"* ]]
+}
+
+@test "combines an out-of-date install with a link-memory refusal in one JSON object" {
+  rm -f "${installed_version_file}"
+  slug="$("${BATS_TEST_DIRNAME}/../adapters/claude-code/hooks/lib/project-slug.sh" "${project_dir}")"
+  memory_path="${HOME}/.claude/projects/${slug}/memory"
+  mkdir -p "${memory_path}"
+  echo "real memory" >"${memory_path}/some_fact.md"
+  write_hook_input "${project_dir}" "session-abc"
+
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+
+  [ "${status}" -eq 0 ]
+  [ "$(jq -s 'length' <<<"${output}")" -eq 1 ]
+  context="$(jq -r '.hookSpecificOutput.additionalContext' <<<"${output}")"
+  [[ "${context}" == *"install.sh"*"migrate"* ]]
 }

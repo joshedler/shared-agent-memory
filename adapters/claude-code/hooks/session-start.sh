@@ -11,7 +11,10 @@
 #    '_unresolved/<native-slug>' key (no lock -- there's no real cross-host
 #    identity to arbitrate) -- and the first time that happens for a given
 #    directory, additionalContext carries a one-time prompt to create a
-#    real marker file instead.
+#    real marker file instead. Every session also compares this host's
+#    recorded install version against the repo's install-version file;
+#    if the host is behind (or never recorded one), the session is told
+#    install.sh needs a re-run, via additionalContext and a systemMessage.
 #
 # Usage:
 #
@@ -127,8 +130,8 @@ function help() {
   echo "  Claude Code SessionStart hook. Reads hook JSON from stdin, links" 1>&2
   echo "  memory and acquires the advisory lock for the resolved project." 1>&2
   echo "  Silent on success; emits additionalContext JSON only when there's" 1>&2
-  echo "  a refusal, a lock conflict, or a one-time unresolved-project" 1>&2
-  echo "  prompt to relay." 1>&2
+  echo "  a refusal, a lock conflict, a one-time unresolved-project prompt," 1>&2
+  echo "  or an out-of-date install (install.sh needs a re-run) to relay." 1>&2
   echo "" 1>&2
   exit 1
 }
@@ -217,13 +220,73 @@ command -v jq >/dev/null || fatal "jq is required but not found on PATH."
 
 core_dir="$(cd "${__dir}/../../../core" && pwd)"
 shared_root="${SHARED_AGENT_MEMORY_ROOT:-${HOME}/.claude-shared-memory}"
-sessions_dir="${HOME}/.local/state/shared-agent-memory/sessions"
+repo_dir="$(cd "${core_dir}/.." && pwd)"
+state_dir="${HOME}/.local/state/shared-agent-memory"
+sessions_dir="${state_dir}/sessions"
+
+# Messages for this session. notices go to Claude via additionalContext;
+# user_messages go straight to the user via systemMessage. Both are
+# emitted together, once, by emit_output.
+notices=()
+user_messages=()
+
+function emit_output() {
+  local context=""
+  local system_message=""
+  local item=""
+
+  for item in "${notices[@]+"${notices[@]}"}"; do
+    context+="${context:+$'\n\n'}${item}"
+  done
+  for item in "${user_messages[@]+"${user_messages[@]}"}"; do
+    system_message+="${system_message:+ }${item}"
+  done
+
+  [[ -n "${context}" ]] || [[ -n "${system_message}" ]] || return 0
+
+  jq -n --arg ctx "${context}" --arg sys "${system_message}" '
+    (if $ctx != "" then {hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}} else {} end)
+    + (if $sys != "" then {systemMessage: $sys} else {} end)'
+}
+
+# Compares this host's recorded install version against the repo's. A
+# missing or malformed record counts as 0, so hosts installed before
+# versioning existed are told to re-run too. A missing or malformed
+# install-version file in the repo skips the check rather than breaking
+# every session.
+function check_install_version() {
+  local required=""
+  local installed=""
+
+  if [[ ! -f "${repo_dir}/install-version" ]]; then
+    debug "No install-version file in ${repo_dir}, skipping install check"
+    return 0
+  fi
+  required="$(tr -d '[:space:]' <"${repo_dir}/install-version")"
+  if [[ ! "${required}" =~ ^[0-9]+$ ]]; then
+    warning "Ignoring malformed ${repo_dir}/install-version: '${required}'"
+    return 0
+  fi
+
+  if [[ -f "${state_dir}/installed-version" ]]; then
+    installed="$(tr -d '[:space:]' <"${state_dir}/installed-version")"
+  fi
+  [[ "${installed}" =~ ^[0-9]+$ ]] || installed=0
+
+  debug "Install version: required=${required} installed=${installed}"
+  ((installed < required)) || return 0
+
+  notices+=("shared-agent-memory: this host's install is out of date (recorded install version ${installed}, repo needs ${required}), so some of its pieces may be missing here. Before responding to the user's first message, tell them this host needs ./install.sh re-run in ${repo_dir}, followed by a new session. Keep reminding them at natural breaks in the work until they confirm it's done.")
+  user_messages+=("⚠ ACTION NEEDED — shared-agent-memory: this host is out of date. Run ./install.sh in ${repo_dir}, then start a new session (install version ${installed}, repo needs ${required}).")
+}
 
 hook_json="$(cat)"
 cwd="$(jq -r '.cwd' <<<"${hook_json}")"
 session_id="$(jq -r '.session_id' <<<"${hook_json}")"
 
 debug "SessionStart: cwd=${cwd} session_id=${session_id}"
+
+check_install_version
 
 slug="$("${__dir}/lib/project-slug.sh" "${cwd}")"
 memory_path="${HOME}/.claude/projects/${slug}/memory"
@@ -245,8 +308,8 @@ link_status=0
 if ((link_status != 0)); then
   link_error="$(<"${link_err_file}")"
   rm -f "${link_err_file}"
-  jq -n --arg ctx "shared-agent-memory: couldn't link this project's memory: ${link_error}" \
-    '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
+  notices+=("shared-agent-memory: couldn't link this project's memory: ${link_error}")
+  emit_output
   exit 0
 fi
 rm -f "${link_err_file}"
@@ -262,11 +325,11 @@ if [[ "${project_key}" = "_personal" ]] || ((unresolved)); then
     if [[ ! -f "${prompted_file}" ]]; then
       mkdir -p "${prompted_dir}"
       touch "${prompted_file}"
-      jq -n --arg ctx "shared-agent-memory: '${cwd}' has no git remote and no .claude-project-id marker file, so its memory is only linked into the local '${project_key}' bucket for now -- it won't sync to other hosts under a real project key. Want me to create a marker file here so it gets one? (Only asking once for this directory; declining just leaves it in _unresolved.)" \
-        '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
+      notices+=("shared-agent-memory: '${cwd}' has no git remote and no .claude-project-id marker file, so its memory is only linked into the local '${project_key}' bucket for now -- it won't sync to other hosts under a real project key. Want me to create a marker file here so it gets one? (Only asking once for this directory; declining just leaves it in _unresolved.)")
     fi
   fi
 
+  emit_output
   info "SessionStart complete for ${project_key} (session ${session_id}, always-synced -- no lock)"
   exit 0
 fi
@@ -277,24 +340,20 @@ debug "Lock status: ${lock_status}"
 mkdir -p "${sessions_dir}"
 printf '%s\n' "${project_key}" >"${sessions_dir}/${session_id}.key"
 
-context=""
-
 if [[ "${lock_status}" != "clean" ]]; then
   read -r lock_kind lock_host lock_acquired_at <<<"${lock_status}"
   lock_time="$(date -d "@${lock_acquired_at}" '+%Y-%m-%d %H:%M:%S %Z')"
 
   case "${lock_kind}" in
   conflict)
-    context="shared-agent-memory: this project has an active session on host '${lock_host}' as of ${lock_time}. Not blocked, just worth mentioning in case it wasn't expected."
+    notices+=("shared-agent-memory: this project has an active session on host '${lock_host}' as of ${lock_time}. Not blocked, just worth mentioning in case it wasn't expected.")
     ;;
   stale-reclaimed)
-    context="shared-agent-memory: reclaimed this project's lock, last held by host '${lock_host}' as of ${lock_time} (past the staleness window, likely an uncleanly-ended session)."
+    notices+=("shared-agent-memory: reclaimed this project's lock, last held by host '${lock_host}' as of ${lock_time} (past the staleness window, likely an uncleanly-ended session).")
     ;;
   esac
 fi
 
-if [[ -n "${context}" ]]; then
-  jq -n --arg ctx "${context}" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
-fi
+emit_output
 
 info "SessionStart complete for ${project_key} (session ${session_id})"

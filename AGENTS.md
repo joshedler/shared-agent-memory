@@ -29,8 +29,9 @@ check.
 Run the `shared-agent-memory-setup` skill
 (`.claude/skills/shared-agent-memory-setup/SKILL.md`). It:
 
-1. Confirms the shared memory root exists (creating it if `install.sh`
-   wasn't run first).
+1. Makes sure `install.sh` has run and is current for this repo's
+   `install-version` (running it if not), so the shared root, skill
+   links and `~/.claude/rules` link are all in place.
 2. Registers this host's `SessionStart`/`Stop` hooks.
 3. Hands off to the `shared-agent-memory-migrate` skill if this host has
    existing per-project memory stores that predate this tool.
@@ -38,3 +39,13 @@ Run the `shared-agent-memory-setup` skill
 If you're being asked to work on *this repo's own code* rather than to
 set it up on a host, `shared-agent-memory-setup` isn't what you want —
 read `README.md` for the architecture instead.
+
+## If you change what `install.sh` sets up
+
+Bump the number in `install-version` (repo root) in the same commit as
+any change that existing hosts only pick up by re-running `install.sh`:
+a new skill under `.claude/skills/`, a new or changed link, anything
+else `install.sh` creates. That's what makes every host's `SessionStart`
+hook tell its user to re-run it after they pull. Changes that take
+effect from the checkout alone (hook script edits, skill content
+edits) don't need a bump.

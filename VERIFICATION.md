@@ -67,8 +67,21 @@ first-run prompts.
 - ◻ **Uninstall.** Run `shared-agent-memory-uninstall` on a host with real
   synced content. Expect: hooks removed from `~/.claude/settings.json`,
   each native memory symlink replaced with a real copy of its current
-  content (not left as a dangling or orphaned symlink), and shared-root /
-  backup data left alone for manual removal.
+  content (not left as a dangling or orphaned symlink), the
+  `~/.claude/rules` link either replaced with a real copy of `_rules/` or
+  removed (your choice), and shared-root / backup data left alone for
+  manual removal.
+- ◻ **Shared rules load in every session.** With `~/.claude/rules` linked
+  to `<shared-root>/_rules` by `install.sh`, start sessions from a
+  resolved project, from `$HOME`, and from an unresolved directory.
+  Expect: `/memory` (or `/status`) lists the `_rules/` files as loaded in
+  each, and the session can quote them without reading any file.
+- ✅ verified — **Existing host told to re-run `install.sh`.** On a host installed
+  before `install-version` existed (or with its recorded version behind
+  the repo's), pull and start a session without re-running `install.sh`.
+  Expect: the session's first context mentions re-running `install.sh`,
+  and you see a `systemMessage` saying the same. After a clean
+  `./install.sh`, the next session is silent about it.
 
 ## Session lifecycle
 

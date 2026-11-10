@@ -29,7 +29,7 @@ If Syncthing (or any other sync tool) is set up for the shared root, tell
 the user to pause syncing or unshare the folder on this host now, before
 continuing. This matters for two reasons: it stops the shared content
 from changing out from under you while step 3 reads it, and — more
-importantly — it prevents a local deletion later (step 5, on the shared
+importantly — it prevents a local deletion later (step 6, on the shared
 root) from propagating as a deletion to *other* hosts that aren't being
 uninstalled, depending on how delete-propagation is configured. Don't
 proceed past this step until the user confirms sync is paused, if they
@@ -62,13 +62,28 @@ For each entry from step 2:
 - Create a real directory there and copy the chosen content into it.
 - Report what happened for that project before moving to the next.
 
-## 4. Clean up session state
+## 4. Restore the rules directory
 
-Remove `~/.local/state/shared-agent-memory/sessions/*` — pure ephemeral
-bookkeeping (session_id → project key), safe to delete unconditionally;
-nothing real is ever stored there.
+If `~/.claude/rules` is a symlink into the shared root's `_rules/`
+bucket, it was created by `install.sh`. Ask the user whether they want
+to keep the shared rules on this host as plain local files:
 
-## 5. Leave the rest for the user
+- **Keep them:** remove the symlink, create a real `~/.claude/rules`
+  directory, and copy `_rules/`'s contents into it.
+- **Drop them:** remove the symlink only.
+
+If `~/.claude/rules` is a real directory, or a symlink pointing anywhere
+else, it isn't this tool's — leave it alone.
+
+## 5. Clean up session state
+
+Remove `~/.local/state/shared-agent-memory/sessions/*` and
+`~/.local/state/shared-agent-memory/installed-version` — pure
+bookkeeping (session_id → project key, and the install version
+`install.sh` recorded), safe to delete unconditionally; nothing real is
+ever stored there.
+
+## 6. Leave the rest for the user
 
 Do **not** delete these — they're either real data or an explicit safety
 net, and removing them is the user's call, not this skill's:
@@ -85,14 +100,14 @@ net, and removing them is the user's call, not this skill's:
 Tell the user these still exist and where, rather than silently leaving
 them unmentioned or silently removing them.
 
-## 6. Remove the globally-installed skills
+## 7. Remove the globally-installed skills
 
 Remove every `~/.claude/skills/shared-agent-memory-*` entry that's a
 symlink into this repo (`install.sh` links every `.claude/skills/*/`
 subdirectory it finds, so the exact set can grow — don't hardcode a name
 list here) — safe, they're just symlinks into the repo, not real data.
 
-## 7. Tell the user what's left
+## 8. Tell the user what's left
 
 The repo itself (wherever it was cloned) isn't touched by this skill —
 mention that removing it is the final manual step, whenever they're

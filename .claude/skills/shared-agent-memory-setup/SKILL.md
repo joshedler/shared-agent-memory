@@ -1,6 +1,6 @@
 ---
 name: shared-agent-memory-setup
-description: One-time setup for shared-agent-memory on this host — creates the shared memory root, registers the Claude Code hooks, and hands off to migration for any pre-existing memory stores.
+description: One-time setup for shared-agent-memory on this host — makes sure install.sh has run and is current, registers the Claude Code hooks, and hands off to migration for any pre-existing memory stores.
 ---
 
 # shared-agent-memory: setup
@@ -26,13 +26,37 @@ work with, and a real cross-host merge (e.g. two independently-built
 `_personal` stores) can't happen properly — it gets treated as fresh
 content instead of something that needs reconciling.
 
-## 1. Confirm the shared memory root
+## 1. Make sure `install.sh` has run, and is current
 
-Default location: `~/.claude-shared-memory`. If `install.sh` was already
-run, it exists. If not, create it now (`mkdir -p`) and tell the user what
-location you used, in case they'd prefer a different one — ask before
-moving it if they push back, don't just proceed silently once a location
-is already in use.
+`install.sh` creates the shared memory root, links this repo's skills
+into `~/.claude/skills/`, links `~/.claude/rules` to the shared root's
+`_rules/` bucket, and records the repo's install version for this host.
+Creating only the shared root folder by hand leaves the rest missing, and
+the `SessionStart` hook would report the host as out of date on its very
+first session.
+
+Determine this repo's absolute path (`git rev-parse --show-toplevel` if
+run from inside it; call it `<repo>` below), then compare the version the
+repo expects with the one this host recorded:
+
+```
+cat <repo>/install-version
+cat ~/.local/state/shared-agent-memory/installed-version
+```
+
+- **Recorded version missing, or lower than the repo's:** run
+  `<repo>/install.sh`. Default shared root is `~/.claude-shared-memory`;
+  if the user wants a different location, pass `--root <path>` and use
+  that same path in step 2. Tell the user which location was used, in
+  case they'd prefer a different one — ask before moving it if they push
+  back, don't just proceed silently once a location is already in use.
+- **`install.sh` warned that it skipped something** (a skill, or
+  `~/.claude/rules`, blocked by something already there): show the user
+  exactly what was skipped and why, and stop here until it's resolved and
+  `install.sh` re-runs cleanly. Don't register hooks on a partially
+  installed host.
+- **Recorded version equal to or higher than the repo's:** already
+  installed; confirm the shared root exists and move on.
 
 ## 2. Register the session hooks
 
@@ -40,8 +64,7 @@ Confirm `jq` is on `PATH` first (`command -v jq`). If it's missing, tell
 the user to run `mise install` in this repo (it's pinned in `mise.toml`)
 before continuing — don't register hooks that will fail at runtime.
 
-Determine this repo's absolute path (`git rev-parse --show-toplevel` if
-run from inside it; call it `<repo>` below) — hook commands in
+Use the absolute `<repo>` path from step 1 — hook commands in
 `settings.json` need an absolute path, since this repo could be cloned
 anywhere.
 
