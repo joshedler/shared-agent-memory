@@ -75,6 +75,26 @@ teardown() {
   [ "${output}" = "github.com/example-org/example-repo" ]
 }
 
+@test "a port in an ssh:// remote is dropped from the key" {
+  git -C "${scratch}" init -q
+  git -C "${scratch}" remote add origin ssh://git@github.com:2222/example-org/example-repo.git
+
+  run --separate-stderr "${script}" "${scratch}"
+
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "github.com/example-org/example-repo" ]
+}
+
+@test "an ssh:// remote with both an alias and a port resolves to the real host, no port" {
+  git -C "${scratch}" init -q
+  git -C "${scratch}" remote add origin ssh://git@github.com-example-alias:2222/example-org/example-repo.git
+
+  run --separate-stderr "${script}" "${scratch}"
+
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "github.com/example-org/example-repo" ]
+}
+
 @test "an https remote never consults ssh" {
   git -C "${scratch}" init -q
   git -C "${scratch}" remote add origin https://github.com/example-org/example-repo.git

@@ -218,7 +218,8 @@ if [[ -n "${remote_url}" ]]; then
   # deploy-key `Host github.com-myrepo`), which would put a host-specific
   # spelling into the key. `ssh -G` prints the effective config for a host
   # without connecting; swap the alias for its real `hostname`. If ssh is
-  # missing or fails, keep the host as written.
+  # missing or fails, keep the host as written. Caveat: `ssh -G` still runs
+  # any `Match exec` commands in the user's ssh config, on every resolve.
   ssh_host=""
   if [[ "${remote_url}" == ssh://* ]]; then                                  # ssh://[user@]host[:port]/path
     ssh_host="${remote_url#ssh://}"                                          # drop the scheme
@@ -245,6 +246,14 @@ if [[ -n "${remote_url}" ]]; then
   key="${key#https://}" # drop a leading https:// scheme
   key="${key#http://}"  # drop a leading http:// scheme
   key="${key#git@}"     # drop a leading git@ user
+
+  if [[ "${remote_url}" == ssh://* ]]; then # only ssh:// URLs can carry a port
+    authority="${key%%/*}"                 # [user@]host[:port]
+    if [[ "${authority}" =~ :[0-9]+$ ]]; then
+      key="${authority%:*}/${key#*/}"      # drop the :port, keep /owner/repo
+    fi
+  fi
+
   key="${key/://}"      # first ':' becomes '/': host:owner/repo -> host/owner/repo
   key="${key%.git}"     # drop a trailing .git
   key="${key,,}"        # lowercase everything
