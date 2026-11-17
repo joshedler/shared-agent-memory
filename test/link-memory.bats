@@ -47,6 +47,34 @@ teardown() {
   [ "$(readlink -f "${memory_path}")" = "$(readlink -f "${shared_root}/test-project")" ]
 }
 
+@test "relinks when the old target holds only a leftover .lock, and leaves the lock in place" {
+  mkdir -p "$(dirname "${memory_path}")"
+  mkdir -p "${scratch}/old-lock-only-target"
+  echo "other-session" >"${scratch}/old-lock-only-target/.lock"
+  ln -s "${scratch}/old-lock-only-target" "${memory_path}"
+
+  run --separate-stderr "${script}" "${memory_path}" "${shared_root}" "test-project"
+
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "relinked" ]
+  [ "$(readlink -f "${memory_path}")" = "$(readlink -f "${shared_root}/test-project")" ]
+  [ -f "${scratch}/old-lock-only-target/.lock" ]
+}
+
+@test "refuses to relink when the old target has a .lock and real content" {
+  mkdir -p "$(dirname "${memory_path}")"
+  mkdir -p "${scratch}/old-lock-and-content-target"
+  echo "other-session" >"${scratch}/old-lock-and-content-target/.lock"
+  echo "real memory" >"${scratch}/old-lock-and-content-target/some_fact.md"
+  ln -s "${scratch}/old-lock-and-content-target" "${memory_path}"
+
+  run --separate-stderr "${script}" "${memory_path}" "${shared_root}" "test-project"
+
+  [ "${status}" -ne 0 ]
+  [[ "${stderr}" == *"migrate"* ]]
+  [ "$(readlink -f "${memory_path}")" = "$(readlink -f "${scratch}/old-lock-and-content-target")" ]
+}
+
 @test "refuses to relink when the old target still has real content" {
   mkdir -p "$(dirname "${memory_path}")"
   mkdir -p "${scratch}/old-target-with-content"

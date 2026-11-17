@@ -4,7 +4,7 @@
 #  - Ensures a Claude Code project's memory path is a symlink into its
 #    shared-agent-memory subfolder. Never touches real (non-symlink) data
 #    at the memory path, and never relinks over a stale symlink target
-#    that still has content -- both are refused with guidance to run the
+#    that still has content (anything besides a .lock) -- both are refused with guidance to run the
 #    'shared-agent-memory-migrate' skill instead, so memory is never
 #    silently lost.
 #
@@ -235,10 +235,13 @@ if [[ -L "${memory_path}" ]]; then
     exit 0
   fi
 
-  if [[ ! -e "${current_target}" ]] || { [[ -d "${current_target}" ]] && [[ -z "$(ls -A "${current_target}" 2>/dev/null)" ]]; }; then
+  # A bucket holding nothing but a .lock still counts as empty: the lock is
+  # session bookkeeping (stale, or another host's live session), not memory.
+  # It's left in place either way; it isn't this session's to remove.
+  if [[ ! -e "${current_target}" ]] || { [[ -d "${current_target}" ]] && [[ -z "$(find "${current_target}" -mindepth 1 -maxdepth 1 ! -name .lock -print -quit 2>/dev/null)" ]]; }; then
     rm -f "${memory_path}"
     ln -s "${resolved_target_dir}" "${memory_path}"
-    info "Relinked ${memory_path} -> ${resolved_target_dir} (old target ${current_target} was empty or missing, nothing lost)"
+    info "Relinked ${memory_path} -> ${resolved_target_dir} (old target ${current_target} was empty, missing or held only a .lock, nothing lost)"
     printf 'relinked\n'
     exit 0
   fi

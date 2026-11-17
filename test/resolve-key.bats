@@ -7,6 +7,28 @@ bats_require_minimum_version 1.5.0
 setup() {
   script="${BATS_TEST_DIRNAME}/../core/resolve-key.sh"
   scratch="$(mktemp -d)"
+
+  # A fake `ssh` first on PATH, so no test ever reads the real ssh config.
+  # It answers `ssh -G <host>` the way real ssh does: one config line per
+  # key, with `hostname` mapped from the alias below and every other host
+  # passed through unchanged. Each call is logged so tests can assert
+  # whether ssh was consulted at all.
+  fake_bin="${scratch}/fake-bin"
+  mkdir -p "${fake_bin}"
+  cat >"${fake_bin}/ssh" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"${FAKE_SSH_LOG}"
+[[ "${FAKE_SSH_FAIL:-}" = "1" ]] && exit 255
+[[ "${1:-}" = "-G" ]] || exit 255
+case "${2:-}" in
+  github.com-example-alias) real="github.com" ;;
+  *) real="${2:-}" ;;
+esac
+printf 'user git\nhostname %s\ncanonicalizehostname false\nport 22\n' "${real}"
+EOF
+  chmod +x "${fake_bin}/ssh"
+  export PATH="${fake_bin}:${PATH}"
+  export FAKE_SSH_LOG="${scratch}/ssh.log"
 }
 
 teardown() {
@@ -31,6 +53,48 @@ teardown() {
 
   [ "${status}" -eq 0 ]
   [ "${output}" = "github.com/example-org/example-repo" ]
+}
+
+@test "an ssh host alias in an scp-style remote resolves to the real host" {
+  git -C "${scratch}" init -q
+  git -C "${scratch}" remote add origin git@github.com-example-alias:example-org/example-repo.git
+
+  run --separate-stderr "${script}" "${scratch}"
+
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "github.com/example-org/example-repo" ]
+}
+
+@test "an ssh host alias in an ssh:// remote resolves to the real host" {
+  git -C "${scratch}" init -q
+  git -C "${scratch}" remote add origin ssh://git@github.com-example-alias/example-org/example-repo.git
+
+  run --separate-stderr "${script}" "${scratch}"
+
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "github.com/example-org/example-repo" ]
+}
+
+@test "an https remote never consults ssh" {
+  git -C "${scratch}" init -q
+  git -C "${scratch}" remote add origin https://github.com/example-org/example-repo.git
+
+  run --separate-stderr "${script}" "${scratch}"
+
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "github.com/example-org/example-repo" ]
+  [ ! -e "${FAKE_SSH_LOG}" ]
+}
+
+@test "if ssh fails, an ssh remote keeps its literal host" {
+  git -C "${scratch}" init -q
+  git -C "${scratch}" remote add origin git@github.com-example-alias:example-org/example-repo.git
+  export FAKE_SSH_FAIL=1
+
+  run --separate-stderr "${script}" "${scratch}"
+
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "github.com-example-alias/example-org/example-repo" ]
 }
 
 @test "falls back to marker file when there's no git remote" {

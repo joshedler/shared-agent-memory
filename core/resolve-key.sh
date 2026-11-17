@@ -214,15 +214,40 @@ dir="${1:-$(pwd)}"
 remote_url="$(git -C "${dir}" remote get-url origin 2>/dev/null || true)"
 
 if [[ -n "${remote_url}" ]]; then
+  # An ssh remote's host can be an ssh config alias (e.g. a per-repo
+  # deploy-key `Host github.com-myrepo`), which would put a host-specific
+  # spelling into the key. `ssh -G` prints the effective config for a host
+  # without connecting; swap the alias for its real `hostname`. If ssh is
+  # missing or fails, keep the host as written.
+  ssh_host=""
+  if [[ "${remote_url}" == ssh://* ]]; then                                  # ssh://[user@]host[:port]/path
+    ssh_host="${remote_url#ssh://}"                                          # drop the scheme
+    ssh_host="${ssh_host%%/*}"                                               # drop the path: [user@]host[:port]
+    ssh_host="${ssh_host##*@}"                                               # drop the user: host[:port]
+    ssh_host="${ssh_host%%:*}"                                               # drop the port: host
+  elif [[ "${remote_url}" != *://* ]] && [[ "${remote_url}" == *:* ]]; then # scp-style [user@]host:path
+    ssh_host="${remote_url%%:*}"                                             # drop :path: [user@]host
+    ssh_host="${ssh_host##*@}"                                               # drop the user: host
+  fi
+
+  if [[ -n "${ssh_host}" ]]; then
+    real_host="$(ssh -G "${ssh_host}" 2>/dev/null | awk '$1 == "hostname" { print $2; exit }' || true)"
+
+    if [[ -n "${real_host}" ]] && [[ "${real_host}" != "${ssh_host}" ]]; then
+      debug "ssh host '${ssh_host}' is an alias for '${real_host}'"
+      remote_url="${remote_url/"${ssh_host}"/"${real_host}"}" # swap the first (literal) alias match for the real host
+    fi
+  fi
+
   key="${remote_url}"
-  key="${key#ssh://}"
-  key="${key#git://}"
-  key="${key#https://}"
-  key="${key#http://}"
-  key="${key#git@}"
-  key="${key/://}"
-  key="${key%.git}"
-  key="${key,,}"
+  key="${key#ssh://}"   # drop a leading ssh:// scheme
+  key="${key#git://}"   # drop a leading git:// scheme
+  key="${key#https://}" # drop a leading https:// scheme
+  key="${key#http://}"  # drop a leading http:// scheme
+  key="${key#git@}"     # drop a leading git@ user
+  key="${key/://}"      # first ':' becomes '/': host:owner/repo -> host/owner/repo
+  key="${key%.git}"     # drop a trailing .git
+  key="${key,,}"        # lowercase everything
 
   debug "Resolved '${dir}' via git remote: ${key}"
   printf '%s\n' "${key}"
