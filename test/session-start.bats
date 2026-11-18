@@ -297,3 +297,44 @@ write_hook_input() {
   context="$(jq -r '.hookSpecificOutput.additionalContext' <<<"${output}")"
   [[ "${context}" == *"install.sh"*"migrate"* ]]
 }
+
+# Asserts the hook refused bad input loudly and touched nothing.
+assert_refused_bad_input() {
+  [ "${status}" -eq 0 ]
+  [[ "$(jq -r '.systemMessage' <<<"${output}")" == *"no usable cwd/session_id"* ]]
+  [ ! -e "${HOME}/.claude/projects" ]
+  [ ! -e "${SHARED_AGENT_MEMORY_ROOT}/_unresolved" ]
+  [ -z "$(find "${SHARED_AGENT_MEMORY_ROOT}" -name .lock 2>/dev/null)" ]
+}
+
+@test "refuses input with no cwd, loudly, without linking anything" {
+  printf '{"session_id": "session-abc", "hook_event_name": "SessionStart"}' >"${scratch}/hook_input.json"
+
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+
+  assert_refused_bad_input
+}
+
+@test "refuses input with no session_id, loudly, without linking anything" {
+  jq -n --arg cwd "${project_dir}" '{cwd: $cwd, hook_event_name: "SessionStart"}' >"${scratch}/hook_input.json"
+
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+
+  assert_refused_bad_input
+}
+
+@test "refuses a cwd that doesn't exist" {
+  write_hook_input "${scratch}/nowhere" "session-abc"
+
+  run --separate-stderr bash -c "'${script}' < '${scratch}/hook_input.json'"
+
+  assert_refused_bad_input
+}
+
+@test "refuses a relative cwd" {
+  write_hook_input "project" "session-abc"
+
+  run --separate-stderr bash -c "cd '${scratch}' && '${script}' < '${scratch}/hook_input.json'"
+
+  assert_refused_bad_input
+}

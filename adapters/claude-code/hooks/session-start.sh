@@ -281,10 +281,21 @@ function check_install_version() {
 }
 
 hook_json="$(cat)"
-cwd="$(jq -r '.cwd' <<<"${hook_json}")"
-session_id="$(jq -r '.session_id' <<<"${hook_json}")"
+cwd="$(jq -r '.cwd // empty' <<<"${hook_json}" 2>/dev/null || true)"
+session_id="$(jq -r '.session_id // empty' <<<"${hook_json}" 2>/dev/null || true)"
 
 debug "SessionStart: cwd=${cwd} session_id=${session_id}"
+
+# Without a real cwd the key and slug come out as junk (a missing cwd once
+# made an _unresolved/null bucket), and without a session_id the lock has
+# no owner. Refuse loudly via systemMessage: a failing SessionStart hook's
+# stderr is easy to miss.
+if [[ -z "${session_id}" ]] || [[ "${cwd}" != /* ]] || [[ ! -d "${cwd}" ]]; then
+  error "SessionStart input had no usable cwd/session_id (cwd='${cwd}', session_id='${session_id}'); not linking memory"
+  user_messages+=("⚠ shared-agent-memory: SessionStart got no usable cwd/session_id from Claude Code, so memory was not linked for this session.")
+  emit_output
+  exit 0
+fi
 
 check_install_version
 
